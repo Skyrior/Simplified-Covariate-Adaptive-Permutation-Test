@@ -83,11 +83,13 @@ greps=500 ## The number of random permutations to generate (B in step 3).
 ## -- Optional Arguments
 ## m: Length of the vector X = (X_i)
 ## n: Length of the vector Y = (Y_i)
-## xfunc: Distribution for X
-## yfunc: Distribution for Y
+## xfunc: Distribution for X. Specifically, the Monte Carlo simulation
+##        will call xfunc(m, xdist). If m=20, xdist=list(0, 1), then that means
+##        we will call xfunc(20, 0, 1).
+## yfunc: Distribution for Y. Calls yfunc(n, ydist).
 ## alpha: rejection threshold
-## xdist: Parameters passed to xfunc, other than the first.
-## ydist: Parameters passed to yfunc, other than the first.
+## xdist: Parameters passed to xfunc's second argument and on.
+## ydist: Parameters passed to yfunc's second argument and on.
 ## reps: Passed to the first argument of xfunc and yfunc,
 ##       For most R standard functions this would be number of reps.
 ## seed: Run the simulation with the given seed for replication
@@ -112,11 +114,15 @@ mc <- function(m=gm, n=gn, xfunc=rnorm, yfunc=rnorm, test, alpha=0.05,
     ## Create the matrix (reps by m+n) of observations of the random variables
     ## X and Y.
     
-    Z <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
-      rnorm(m+n, 0, 1)
+    X <- foreach(i=1:reps, .combine=rbind, .packages="purrr") %dopar% {
+      do.call(xfunc, c(m, xdist))
     }
     
-    Z <- as.data.frame(t(Z))
+    Y <- foreach(i=1:reps, .combine=rbind, .packages="purrr") %dopar% {
+      do.call(yfunc, c(n, ydist))
+    }
+    
+    Z <- as.data.frame(cbind(X, Y))
     
     message("Randomly generated data created!")
     
@@ -540,3 +546,6 @@ s2 <- mc(m=200, n=200, test=c(t1, t2), xdist=list(0, 5), ydist=list(0, 1),
 
 s3 <- mc(m=500, n=100, test=c(t1, t2), xdist=list(0, 5), ydist=list(0, 1),
          reps = 500)
+
+## To view the data for r1, use View(r1). To reference a specific result,
+## use r1[[x]], where x is the x-th test statistic employed.
