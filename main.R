@@ -5,31 +5,66 @@
 ## https://github.com/Skyrior/Simplified-Covariate-Adaptive-Permutation-Test
 ## R version: 4.0.3
 
+## -- Provides a parallel-processed Monte-Carlo simulation for applying a
+##    two-sample permutation test with arbitrary test statistics on an
+##    arbitrarily generated data set with no stratification, and calculates
+##    the rejection probability.
+##
+##    The provided code only implements the two test statistics described
+##    in the assessment and uses rnorm(), but with slight modification
+##    can be extended to any arbitrary distribution and arbitrary test
+##    statistics by supplying the functions as arguments to the Monte Carlo
+##    main function. The parallel processing allows the simulation to scale
+##    with logical cores very well by Amdahl's Law, as most of the computations
+## -- are parallelized.
+
+## -- WARNING: The R interpreter is not thread-safe. Care has been taken to
+##    ensure thread safety but if issues arise, a quick replacement of
+##    %%dopar%% to %%do%% should do the trick.
+
+## -----------------
+## QUICK START
+## -----------------
+
+## Simply select all the code and run. The main function is the mc (Monte Carlo)
+## function that will create a dataset of randomly generated observations
+## of input distributions, and use the given test statistics to estimate the
+## probability of rejection based on the two-sample permutation test.
+
 library(purrr) ## for lfold (reduce) use install.packages("purrr") if necessary
-library(future.apply)
 library(parallel)
+library(doParallel)
+library(foreach)
 plan(multicore)
+cores <- detectCores(logical=TRUE)
+registerDoParallel(ifelse(cores>=4, cores-1, 1)) ## keep 1 of the cores idle.
+## The program is significantly faster when utilizing basic multithreading.
+## Change %%dopar%% to %%do%% if parallel processing causes issues.
+
+## -- seed --
+## Unfortunately, the parallel process does not respect the RNG seed.
+## Uncomment if using the single-threaded loops for replication.
+## set.seed(NULL)
 
 ## -- debug --
 ## Set to true to turn on most messages in functions to trace
 ## what is happening to the data. Warning: only turn on debug
-## and run small tests.
+## and run small tests. Can crash if used on the Monte Carlo function
+## with >5 replications directly. Using it on a single replication
+## to trace inputs and errors is ideal.
 
-debug = TRUE
+debug = FALSE
 
 ## -- gm, gn & greps --
 ## Default values for generated datasets.
 
-gm=10
-gn=10
+gm=10 ## the default, global value for m.
+gn=10 ## ... for n.
 greps=500 ## The number of random permutations to generate (B in step 3).
 
-
-## Set suppress = TRUE if the loop messages is not needed.
-suppress <- FALSE
-
-## Change processing cores as needed.
-cores <- 24
+### -- deprecated
+### Set suppress = TRUE if the loop messages is not needed.
+### suppress <- FALSE ### does not work for parallel processes.
 
 ## -- MAIN --
 
@@ -42,7 +77,8 @@ cores <- 24
 ## parameters.
 ## 
 ## -- Arguments --
-## test: The test statistic to use
+## test: A vector of test statistics to use. For example, to use
+##       functions t1 and t2, test=c(t1, t2)
 ##
 ## -- Optional Arguments
 ## m: Length of the vector X = (X_i)
@@ -62,33 +98,89 @@ cores <- 24
 mc <- function(m=gm, n=gn, xfunc=rnorm, yfunc=rnorm, test, alpha=0.05,
                xdist=list(0, 0), ydist=list(0, 0), reps=500){
   
-  ## input checks
-  if((!is.function(xfunc)) || (!is.function(yfunc))) stop(
-    "Supplied xfunc or yfunc is not a function."
+  print(system.time({
+    
+    ## input checks
+    if((!is.function(xfunc)) || (!is.function(yfunc))) stop(
+      "Supplied xfunc or yfunc is not a function."
+    )
+    if((!is.list(xdist)) || (!is.list(ydist))) stop(
+      "Supplied xdist or ydist is not a list of parameters. Note:",
+      " numerical arrays are not lists."
+    )
+    
+    ## Create the matrix (reps by m+n) of observations of the random variables
+    ## X and Y.
+    
+    Z <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
+      rnorm(m+n, 0, 1)
+    }
+    
+    Z <- as.data.frame(t(Z))
+    
+    message("Randomly generated data created!")
+    
+    ## Calculate the permutation test statistic for each observation:
+    ## Start with creating an empty list
+    
+    L <- list(1)
+    
+    ## Might cause issue passing functions and arguments when running
+    ## in parallel. Use the commented block if there are issues.
+    
+    for(j in 1:length(test)){
+      L[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
+        ## .inorder is TRUE by default, so we don't have to worry about
+        ## out of order binding with parallel foreach.
+        apply.tpermute(unlist(unname(Z[i,])), test[[j]], m=m, n=n)
+      }
+    }
+    
+    ## Uncomment if the for loop is causing problems, and comment the block above.
+    ## Or simply change %dopar% to %do%!
+    ##for(j in 1:length(test)){
+    ##  L[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %do% {
+    ##    ## .inorder is TRUE by default, so we don't have to worry about
+    ##    ## out of order binding with parallel foreach.
+    ##    apply.tpermute(unlist(unname(Z[i,])), test[[j]], m=m, n=n)
+    ##  }
+    ##}
+    
+    message("Test statistics values calculated for data!")
+    
+    ## rejections
+    
+    RJ <- list(1)
+    
+    for(j in 1:length(test)){
+      RJ[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
+        unname(reject(apply.teststatistic(Z[i,], test[[j]], m=m, n=n),
+                      ## the test stat for the original
+                      testvalues = L[[j]][,i],
+                      threshold = alpha, method = quantile))
+      }  
+    }
+    
+    ## Uncomment if the for loop is causing problems. Or simply change %dopar% to
+    ## %do%!
+    ##for(j in 1:length(test)){
+    ##  RJ[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %do% {
+    ##    unname(reject(apply.teststatistic(Z[i,], test[[j]], m=m, n=n),
+    ##                  ## the test stat for the original
+    ##                  testvalues = L[[j]][,i],
+    ##                  threshold = alpha, method = quantile))
+    ##  }  
+    ##}
+    
+    ## finally, return the probability of rejections for each test statistic used
+    
+    message("Rejections processed!")
+    
+  }))
+  
+  return(
+    lapply(RJ, mean)
   )
-  if((!is.list(xdist)) || (!is.list(ydist))) stop(
-    "Supplied xdist or ydist is not a list of parameters. Note:",
-    " numerical arrays are not lists."
-  )
-  
-  rejects <- rep(NA, reps)
-  
-  for(v in 1:reps){
-    
-    if(!suppress) message("Loop ", v)
-    
-    ## generate {X_i}, {Y_i}
-    x <- do.call(xfunc, c(m,xdist))
-    y <- do.call(yfunc, c(n,ydist))
-    
-    ## merge into z.
-    z <- c(x,y) ## this is not a list.
-    
-    ## test rejection
-    rejects[v] <- reject(z, test, rep=greps, alpha=alpha, m=m, n=n)
-  }
-  
-  return(sum(rejects))
   
 }
 
@@ -111,28 +203,33 @@ mc <- function(m=gm, n=gn, xfunc=rnorm, yfunc=rnorm, test, alpha=0.05,
 ## r - The computed test statistic.
 
 t1 <- function(data, m=gm, n=gn){
-  if(debug) message("Calling test statistic 1 with ", data, ", ", m,
-                    " and ", n, " with data length ", length(data))
+  
+  ## since we will be accessing specific indices, let's transofrm
+  ## the data into a vector to speed up.
+  dat <- unlist(unname(data))
+  
+  if(debug) message("Calling test statistic 1 with ", dat, ", ", m,
+                    " and ", n, " with data length ", length(dat))
   
   ## input checks
-  if(!reduce(data,
+  if(!reduce(dat,
              function(a, b){a && is.numeric(b)},
              .init=TRUE)) stop("The data supplied to test statistic 1",
                                " is not numeric.")
   if(!is.numeric(m) || !is.numeric(n)) stop("m or n supplied ",
                                             "to test statistic 1 is not",
                                             " numeric.")
-  if(!((m+n)==length(data))) message("Warning: m+n =/= N in test",
-                                     " statistic 1.")
+  if(!((m+n)==length(dat))) message("Warning: m+n =/= N in test",
+                                    " statistic 1.")
   
-  b <- splitAt(data, m+1)
+  b <- splitAt(dat, m+1)
   x <- b[1]
   y <- b[2]
   
   x.mean <- mean(unlist(x))
   y.mean <- mean(unlist(y))
   
-  r <- abs((sqrt(length(data)))*(x.mean-y.mean))
+  r <- abs((sqrt(length(dat)))*(x.mean-y.mean))
   
   if(debug) message("Computed t1 statistic: ", r)
   
@@ -156,26 +253,31 @@ t1 <- function(data, m=gm, n=gn){
 ## r - The computed test statistic.
 
 t2 <- function(data, m=gm, n=gn){
-  if(debug) message("Calling test statistic 2 with ", data, ", ", m,
-                    " and ", n, " with data length ", length(data))
+  
+  ## since we will be accessing specific indices, let's transofrm
+  ## the data into a vector.
+  dat <- unlist(unname(data))
+  
+  if(debug) message("Calling test statistic 2 with ", dat, ", ", m,
+                    " and ", n, " with data length ", length(dat))
   
   ## input checks
-  if(!reduce(data,
+  if(!reduce(dat,
              function(a, b){a && is.numeric(b)},
              .init=TRUE)) stop("The data supplied to test statistic 2",
                                " is not numeric.")
   if(!is.numeric(m) || !is.numeric(n)) stop("m or n supplied ",
                                             "to test statistic 2 is not",
                                             " numeric.")
-  if(!((m+n)==length(data))) message("Warning: m+n =/= N in test",
-                                     " statistic 2.")
+  if(!((m+n)==length(dat))) message("Warning: m+n =/= N in test",
+                                    " statistic 2.")
   
-  b <- splitAt(data, m+1)
+  b <- splitAt(dat, m+1)
   x <- b[1]
   y <- b[2]
-  N <- length(data)
+  N <- length(dat)
   
-  t1 <- t1(data, m, n)
+  t1 <- t1(dat, m, n)
   x.var <- var(unlist(x))
   y.var <- var(unlist(y))
   
@@ -200,7 +302,7 @@ t2 <- function(data, m=gm, n=gn){
 ## N: integer in [1, \infty).
 ##
 ## -- Returns --
-## List[] - a list of the second components of the permutation, in order.
+## vector[] - a list of the second components of the permutation, in order.
 ## For example if a permutation is {(1, 3), (2, 1), (3, 2)}
 ## then this function outputs {3, 1, 2}.
 
@@ -217,7 +319,7 @@ get.permute <- function(N){
   if(debug) message("Input in get.permute validated.")
   n <- as.integer(N)
   
-  ## create a list from 1 to N
+  ## create a vector from 1 to N
   li <- 1:N
   
   ## produces a random, unbiased permutation with Fisher-Yates shuffle
@@ -229,31 +331,35 @@ get.permute <- function(N){
   return(r)
 }
 
-## -- apply.permute (List list, List permutation) --
-## Applies a permutation on the given list, effectively shuffling it.
+## -- apply.permute (Vector list, Vector permutation) --
+## Applies a permutation on the given list (vector), effectively shuffling it.
 ## 
 ## -- Arguments --
-## list: Any generic list.
+## list: Any generic list or vector.
 ##
 ## -- Optional Arguments --
 ## permutation: If supplied, applies the given permutation on the
 ## list. If not supplied, the function generates a random permutation.
 ##
 ## -- Returns --
-## List[] - The shuffled list.
+## Vector[] - The shuffled list.
 
 apply.permute <- function(list, permutation=NULL){
   
+  ## since we will be accessing specific indices, let's transform
+  ## the data into a vector.
+  li <- unlist(unname(list))
+  
   if(debug) message("Calling apply.permute() with arguments ",
-                    list, ", ", permutation)
+                    li, ", ", permutation)
   
   ## input checks
-  if(!(is.vector(list))) stop("Supplied a non-vector in apply.permute()")
+  if(!(is.vector(li))) stop("Supplied a non-vector in apply.permute()")
   
   perm <- if(!is.null(permutation)){
     permutation
   } else {
-    get.permute(length(list))
+    get.permute(length(li))
   }
   tryCatch({if(!isTRUE(all(perm == floor(perm)))){
     stop("Supplied permutation in apply.permute() is not a list of",
@@ -266,10 +372,10 @@ apply.permute <- function(list, permutation=NULL){
   
   ## apply the permutation on the given list.
   
-  s <- rep(NA, length(list))
+  s <- rep(NA, length(li))
   
-  for(var in 1:length(list)){
-    s[var] <- list[perm[var]]
+  for(var in 1:length(li)){
+    s[var] <- li[perm[var]]
   }
   
   return(s)
@@ -297,19 +403,23 @@ apply.permute <- function(list, permutation=NULL){
 
 apply.teststatistic <- function(list, teststatistic,
                                 m=gm, n=gn){
+  
+  d <- unlist(list)
   if(!is.function(teststatistic)) stop("Supplied test statistic",
                                        "is not a function!")
-  r <- tryCatch({teststatistic(data=list, m, n)},
+  r <- tryCatch({teststatistic(data=d, m, n)},
                 error = function(a){
                   stop("Failed to apply the test statistic on the data!",
-                       "\n", "Supplied list: ", list, "\n",
+                       "\n", "Supplied list: ", d, "\n",
                        "Error: ", a)
                 })
   
   if(!is.numeric(r)) message("Warning: The test statistic generated, ", r,
                              " is not a number.")
   
-  return(r[1])
+  if(length(r)>1) message("Warning: The test statistic generated, ", r,
+                          " is a list!")
+  return(r[1]) ##does not make sense to have multiple test statistic, will warn.
 }
 
 ## -- apply.tpermute (List data, function teststatistic, int rep) --
@@ -319,7 +429,7 @@ apply.teststatistic <- function(list, teststatistic,
 ## -- Arguments --
 ## data: Any generic list.
 ## teststatistic: Any appropriate function as long as teststatistic takes
-## one list input.
+## one vector input.
 ##
 ## -- Optional Arguments --
 ## rep: Number of replications. (Default: 500)
@@ -339,14 +449,14 @@ apply.tpermute <- function(data, teststatistic, rep=500,
                     deparse(substitute(teststatistic)), ", ",
                     rep)
   
-  permutations <<- replicate(500, vector(length=40), simplify=FALSE)
+  permutations <- replicate(500, vector(length=40), simplify=FALSE)
   for(var in 1:rep){
-    permutations[[var]] <<- apply.permute(data)
+    permutations[[var]] <- apply.permute(data) ##the data will be flattened
+    ## into a vector. No worries.
   }
   
   r <- rep(NA, rep)
-  for(var in 1:rep){  ## function-passing is thread-unsafe, so we have
-                      ## to use a traditional for loop.
+  for(var in 1:rep){
     r[var] <- apply.teststatistic(permutations[var],
                                   teststatistic, m=m, n=n)
   }
@@ -354,60 +464,46 @@ apply.tpermute <- function(data, teststatistic, rep=500,
   return(r)
 }
 
-## -- reject (List data, function teststatistic, int rep, 
-##             int alpha) --
-## Determine whether to reject the original data based on the
-## two-sample permutation test. Specifically, we reject if
+## -- reject (int testorig, List testvalues, int threshold, func method) --
+## Determine whether to reject the original data (with test statistics value
+## testorig) based on the quantile of test statistics applied on
+## random permutations on an observation. Specifically, we reject if
 ## T_{m, n}(Z_1, ..., Z_N) > c_{1-alpha}, where T_{m, n} is the test statistic,
-## c_{1-alpha} is the (1-alpha)-quantile of the genereated list by applying
-## T_{m, n} on random permutations of the original data, (Z_1, ..., Z_n).
+## c_{1-alpha} is the (1-alpha)-quantile of the test statistic matrix.
+## To generate the test statistics values, use apply.tpermute
 ## 
 ## -- Arguments --
-## data: Any generic list.
-## teststatistic: Any appropriate function as long as teststatistic takes
-## one list input.
-##
-## -- Optional Arguments --
-## rep: Number of replications. (Default: 500)
-## alpha: The threshold of rejection.
-## according to the given seed.
-## m: Demarcates where to cutoff the data to get (X_1, ..., X_m). Default
-##    is the gm variable.
-## n: Sanity check to ensure m+n adds up. Default is the gn variable.
+## testorig: The test statistic for the original observation.
+## testvalues: Test values generated by apply.tpermute, or self-supplied.
+## threshold: the alpha in (1-alpha)
+## method: The method applied on testvalues using threshold.
+##          Make sure to curry the method if necessary!
+##          This function will call method(testvalues, 1-threshold) to get
+##          c_{1-alpha}.
 ##
 ## -- Returns --
-## r - The list of outputs of the test statistic as applied to the data
-##     rep number of times.
+## r - 1 if rejected, 0 if not.
 
-reject <- function(data, teststatistic, rep=500, alpha=0.05,
-                   m=gm, n=gn){
+reject <- function(testorig, testvalues, threshold, method){
   if(debug) message("Calling reject() with arguments ",
                     data, ", ", "with test statistic ",
                     deparse(substitute(teststatistic)), ", ",
                     rep, " ", alpha)
   
-  ## get the test statistics on the permuted data
-  tperms <- apply.tpermute(data, teststatistic, rep=rep,
-                           m=m, n=n)
+  if(!is.numeric(testorig)) stop("Supplied non-numerical value testorig.",
+                                 " in: reject()")
+  if(!is.numeric(threshold) && !(0<=threshold && threshold<=1))
+    stop("threshold supplied in reject() is not valid!")
   
-  ## check if every entry is a numeric value.
-  if(!reduce(tperms,
-             function(a, b){a && is.numeric(b)},
-             .init=TRUE)) stop("The test statistic generated",
-                               " a non-numeric output.")
+  ## Apply the method on relevant parameters.
+  c <- do.call(method, list(testvalues, 1-threshold))
   
-  ## get the (1-alpha)-quantile. Default type 7 (continuous quantile).
-  c <- quantile(tperms, probs=(1-alpha), na.rm=TRUE)
+  if(debug) message("Computed (1-", alpha, ")-method: ", c)
   
-  if(debug) message("Computed (1-", alpha, ")-quantile: ", c)
-  
-  ## get the test statistic for the original data.
-  origt <- apply.teststatistic(data, teststatistic, m=m, n=n)
-  
-  if(debug) message("Original Test Statistic: ", origt)
+  if(debug) message("Original Test Statistic: ", testorig)
   
   ## decide whether to reject
-  rej <- ifelse(origt>c, 1, 0)
+  rej <- ifelse(testorig>c, 1, 0)
   return(rej)
 }
 
@@ -419,139 +515,28 @@ splitAt <- function(vector, pos){
   unname(split(vector, cumsum(seq_along(vector) %in% pos)))
 }
 
-## -- BASIC RUNS --
+## -- BASIC RUNS & DEMONSTRATIONS --
 
-## -- part (a)
+## -- part (a) (r1, r2, r3) & (b) (s1, s2, s3)
 
-r11 <- mc(m = 20,
-         n = 20,
-         xfunc = rnorm,
-         yfunc = rnorm,
-         test = t1,
-         alpha = 0.05,
-         xdist = list(0, 1),
-         ydist = list(0, 1),
-         reps = 1)
+## reps = 500 demonstrates working code, but reps at around 10k
+## demonstrates convergence and is decently fast! (around 1 min for r1,
+## and 10~20 minutes roughly for r2, r3 on 24 logical cores (AMD 5900x))
 
-r12 <- mc(m = 20,
-         n = 20,
-         xfunc = rnorm,
-         yfunc = rnorm,
-         test = t2,
-         alpha = 0.05,
-         xdist = list(0, 1),
-         ydist = list(0, 1),
-         reps = 500,
-         seed = 19376)
+r1 <- mc(m=20, n=20, test=c(t1, t2), xdist=list(0, 1), ydist=list(0, 1),
+         reps = 500)
 
-r21 <- mc(m = 200,
-          n = 200,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t1,
-          alpha = 0.05,
-          xdist = list(0, 1),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 436146)
+r2 <- mc(m=200, n=200, test=c(t1, t2), xdist=list(0, 1), ydist=list(0, 1),
+         reps = 500)
 
-r22 <- mc(m = 200,
-          n = 200,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t2,
-          alpha = 0.05,
-          xdist = list(0, 1),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 25847096)
+r3 <- mc(m=500, n=100, test=c(t1, t2), xdist=list(0, 1), ydist=list(0, 1),
+         reps = 500)
 
-r31 <- mc(m = 500,
-          n = 100,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t1,
-          alpha = 0.05,
-          xdist = list(0, 1),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 14019690)
+s1 <- mc(m=20, n=20, test=c(t1, t2), xdist=list(0, 5), ydist=list(0, 1),
+         reps = 500)
 
-r32 <- mc(m = 500,
-          n = 100,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t2,
-          alpha = 0.05,
-          xdist = list(0, 1),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 54289)
+s2 <- mc(m=200, n=200, test=c(t1, t2), xdist=list(0, 5), ydist=list(0, 1),
+         reps = 500)
 
-## -- part (b)
-
-s11 <- mc(m = 20,
-          n = 20,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t1,
-          alpha = 0.05,
-          xdist = list(0, 5),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 1989)
-
-s12 <- mc(m = 20,
-          n = 20,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t2,
-          alpha = 0.05,
-          xdist = list(0, 5),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 19376)
-
-s21 <- mc(m = 200,
-          n = 200,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t1,
-          alpha = 0.05,
-          xdist = list(0, 5),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 436146)
-
-s22 <- mc(m = 200,
-          n = 200,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t2,
-          alpha = 0.05,
-          xdist = list(0, 5),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 25847096)
-
-s31 <- mc(m = 500,
-          n = 100,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t1,
-          alpha = 0.05,
-          xdist = list(0, 5),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 14019690)
-
-s32 <- mc(m = 500,
-          n = 100,
-          xfunc = rnorm,
-          yfunc = rnorm,
-          test = t2,
-          alpha = 0.05,
-          xdist = list(0, 5),
-          ydist = list(0, 1),
-          reps = 500,
-          seed = 54289)
+s3 <- mc(m=500, n=100, test=c(t1, t2), xdist=list(0, 5), ydist=list(0, 1),
+         reps = 500)
