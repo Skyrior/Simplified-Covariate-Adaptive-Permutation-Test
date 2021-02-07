@@ -1,0 +1,28 @@
+{
+    "id": "FA8CA634",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1612656317340.0,
+    "source_on_save": false,
+    "relative_order": 26,
+    "properties": {
+        "id": "b5e8e2629f7948bf806983b3828d91b1",
+        "name": "permutations",
+        "title": "permutations",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 2791031911184,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1612656317340,
+    "read_only": false,
+    "read_only_alternatives": []
+}

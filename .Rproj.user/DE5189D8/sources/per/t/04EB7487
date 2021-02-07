@@ -1,0 +1,28 @@
+{
+    "id": "04EB7487",
+    "path": null,
+    "project_path": null,
+    "type": "object_explorer",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1612595761069.0,
+    "source_on_save": false,
+    "relative_order": 5,
+    "properties": {
+        "id": "b59f0c40a0e048abb8d10b03ff93ed15",
+        "name": "cr",
+        "title": "cr",
+        "language": "R",
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1612595679,
+    "encoding": "",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1612595761069,
+    "read_only": false,
+    "read_only_alternatives": []
+}
