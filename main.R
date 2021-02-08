@@ -3,7 +3,7 @@
 ## & Tabord-Meehan.
 ## github repository:
 ## https://github.com/Skyrior/Simplified-Covariate-Adaptive-Permutation-Test
-## R version: 4.0.3
+## R version: 3.6.3
 
 ## -- Provides a parallel-processed Monte-Carlo simulation for applying a
 ##    two-sample permutation test with arbitrary test statistics on an
@@ -35,6 +35,7 @@ library(purrr) ## for lfold (reduce) use install.packages("purrr") if necessary
 library(parallel)
 library(doParallel)
 library(foreach)
+library(stargazer)
 plan(multicore)
 cores <- detectCores(logical=TRUE)
 registerDoParallel(ifelse(cores>=4, cores-1, 1)) ## keep 1 of the cores idle.
@@ -388,7 +389,7 @@ apply.permute <- function(list, permutation=NULL){
   
 }
 
-## -- apply.teststatistic (List list, function teststatistic) --
+## -- apply.teststatistic (List/Vector list, function teststatistic) --
 ## Applies the given test statistic on the given list. The function
 ## will throw an error if there is a type mismatch: for example, if the
 ## test statistic is a function that processes strings but the given list
