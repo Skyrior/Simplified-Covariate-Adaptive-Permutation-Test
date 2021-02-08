@@ -101,87 +101,87 @@ mc <- function(m=gm, n=gn, xfunc=rnorm, yfunc=rnorm, test, alpha=0.05,
                xdist=list(0, 0), ydist=list(0, 0), reps=500){
   
   print(system.time({
-    
-    ## input checks
-    if((!is.function(xfunc)) || (!is.function(yfunc))) stop(
-      "Supplied xfunc or yfunc is not a function."
-    )
-    if((!is.list(xdist)) || (!is.list(ydist))) stop(
-      "Supplied xdist or ydist is not a list of parameters. Note:",
-      " numerical arrays are not lists."
-    )
-    
-    ## Create the matrix (reps by m+n) of observations of the random variables
-    ## X and Y.
-    
-    X <- foreach(i=1:reps, .combine=rbind, .packages="purrr") %dopar% {
-      do.call(xfunc, c(m, xdist))
+  
+  ## input checks
+  if((!is.function(xfunc)) || (!is.function(yfunc))) stop(
+    "Supplied xfunc or yfunc is not a function."
+  )
+  if((!is.list(xdist)) || (!is.list(ydist))) stop(
+    "Supplied xdist or ydist is not a list of parameters. Note:",
+    " numerical arrays are not lists."
+  )
+  
+  ## Create the matrix (reps by m+n) of observations of the random variables
+  ## X and Y.
+  
+  X <- foreach(i=1:reps, .combine=rbind, .packages="purrr") %dopar% {
+    do.call(xfunc, c(m, xdist))
+  }
+  
+  Y <- foreach(i=1:reps, .combine=rbind, .packages="purrr") %dopar% {
+    do.call(yfunc, c(n, ydist))
+  }
+  
+  Z <<- as.data.frame(cbind(X, Y))
+  
+  message("Randomly generated data created!")
+  
+  ## Calculate the permutation test statistic for each observation:
+  ## Start with creating an empty list
+  
+  L <<- list(1)
+  
+  ## Might cause issue passing functions and arguments when running
+  ## in parallel. Use the commented block if there are issues.
+  
+  for(j in 1:length(test)){
+    L[[j]] <<- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
+      ## .inorder is TRUE by default, so we don't have to worry about
+      ## out of order binding with parallel foreach.
+      apply.tpermute(unlist(unname(Z[i,])), test[[j]], m=m, n=n)
     }
-    
-    Y <- foreach(i=1:reps, .combine=rbind, .packages="purrr") %dopar% {
-      do.call(yfunc, c(n, ydist))
-    }
-    
-    Z <- as.data.frame(cbind(X, Y))
-    
-    message("Randomly generated data created!")
-    
-    ## Calculate the permutation test statistic for each observation:
-    ## Start with creating an empty list
-    
-    L <- list(1)
-    
-    ## Might cause issue passing functions and arguments when running
-    ## in parallel. Use the commented block if there are issues.
-    
-    for(j in 1:length(test)){
-      L[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
-        ## .inorder is TRUE by default, so we don't have to worry about
-        ## out of order binding with parallel foreach.
-        apply.tpermute(unlist(unname(Z[i,])), test[[j]], m=m, n=n)
-      }
-    }
-    
-    ## Uncomment if the for loop is causing problems, and comment the block above.
-    ## Or simply change %dopar% to %do%!
-    ##for(j in 1:length(test)){
-    ##  L[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %do% {
-    ##    ## .inorder is TRUE by default, so we don't have to worry about
-    ##    ## out of order binding with parallel foreach.
-    ##    apply.tpermute(unlist(unname(Z[i,])), test[[j]], m=m, n=n)
-    ##  }
-    ##}
-    
-    message("Test statistics values calculated for data!")
-    
-    ## rejections
-    
-    RJ <- list(1)
-    
-    for(j in 1:length(test)){
-      RJ[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
-        unname(reject(apply.teststatistic(Z[i,], test[[j]], m=m, n=n),
-                      ## the test stat for the original
-                      testvalues = L[[j]][,i],
-                      threshold = alpha, method = quantile))
-      }  
-    }
-    
-    ## Uncomment if the for loop is causing problems. Or simply change %dopar% to
-    ## %do%!
-    ##for(j in 1:length(test)){
-    ##  RJ[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %do% {
-    ##    unname(reject(apply.teststatistic(Z[i,], test[[j]], m=m, n=n),
-    ##                  ## the test stat for the original
-    ##                  testvalues = L[[j]][,i],
-    ##                  threshold = alpha, method = quantile))
-    ##  }  
-    ##}
-    
-    ## finally, return the probability of rejections for each test statistic used
-    
-    message("Rejections processed!")
-    
+  }
+  
+  ## Uncomment if the for loop is causing problems, and comment the block above.
+  ## Or simply change %dopar% to %do%!
+  ##for(j in 1:length(test)){
+  ##  L[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %do% {
+  ##    ## .inorder is TRUE by default, so we don't have to worry about
+  ##    ## out of order binding with parallel foreach.
+  ##    apply.tpermute(unlist(unname(Z[i,])), test[[j]], m=m, n=n)
+  ##  }
+  ##}
+  
+  message("Test statistics values calculated for data!")
+  
+  ## rejections
+  
+  RJ <<- list(1)
+  
+  for(j in 1:length(test)){
+    RJ[[j]] <<- foreach(i=1:reps, .combine=cbind, .packages="purrr") %dopar% {
+      unname(reject(apply.teststatistic(Z[i,], test[[j]], m=m, n=n),
+                    ## the test stat for the original
+                    testvalues = L[[j]][,i],
+                    threshold = alpha, method = quantile))
+    }  
+  }
+  
+  ## Uncomment if the for loop is causing problems. Or simply change %dopar% to
+  ## %do%!
+  ##for(j in 1:length(test)){
+  ##  RJ[[j]] <- foreach(i=1:reps, .combine=cbind, .packages="purrr") %do% {
+  ##    unname(reject(apply.teststatistic(Z[i,], test[[j]], m=m, n=n),
+  ##                  ## the test stat for the original
+  ##                  testvalues = L[[j]][,i],
+  ##                  threshold = alpha, method = quantile))
+  ##  }  
+  ##}
+  
+  ## finally, return the probability of rejections for each test statistic used
+  
+  message("Rejections processed!")
+  
   }))
   
   return(
@@ -226,7 +226,7 @@ t1 <- function(data, m=gm, n=gn){
                                             "to test statistic 1 is not",
                                             " numeric.")
   if(!((m+n)==length(dat))) message("Warning: m+n =/= N in test",
-                                    " statistic 1.")
+                                     " statistic 1.")
   
   b <- splitAt(dat, m+1)
   x <- b[1]
@@ -276,7 +276,7 @@ t2 <- function(data, m=gm, n=gn){
                                             "to test statistic 2 is not",
                                             " numeric.")
   if(!((m+n)==length(dat))) message("Warning: m+n =/= N in test",
-                                    " statistic 2.")
+                                     " statistic 2.")
   
   b <- splitAt(dat, m+1)
   x <- b[1]
@@ -287,7 +287,7 @@ t2 <- function(data, m=gm, n=gn){
   x.var <- var(unlist(x))
   y.var <- var(unlist(y))
   
-  r <- t1/(sqrt((N/m)*x.var + (N/m)*y.var))
+  r <- t1/(sqrt((N/m)*x.var + (N/n)*y.var))
   
   if(debug) message("Computed t2 statistic: ", r)
   
@@ -458,7 +458,7 @@ apply.tpermute <- function(data, teststatistic, rep=500,
   permutations <- replicate(500, vector(length=40), simplify=FALSE)
   for(var in 1:rep){
     permutations[[var]] <- apply.permute(data) ##the data will be flattened
-    ## into a vector. No worries.
+                                              ## into a vector. No worries.
   }
   
   r <- rep(NA, rep)
@@ -530,7 +530,7 @@ splitAt <- function(vector, pos){
 ## and 10~20 minutes roughly for r2, r3 on 24 logical cores (AMD 5900x))
 
 r1 <- mc(m=20, n=20, test=c(t1, t2), xdist=list(0, 1), ydist=list(0, 1),
-         reps = 500)
+          reps = 500)
 
 r2 <- mc(m=200, n=200, test=c(t1, t2), xdist=list(0, 1), ydist=list(0, 1),
          reps = 500)
